@@ -1,0 +1,40 @@
+# EduFlow — Cursor Rules
+# BuildwithAiGiri MVP #15
+
+## Project
+- Product: EduFlow — AI-powered school management OS with configurable workflows
+- Stack: Next.js 14 App Router, TypeScript, Tailwind CSS
+- AI: Gemini 2.0 Flash (primary) → OpenRouter claude-3-haiku (fallback)
+- Theme: Dark neural/cyberpunk — bg #030014, cyan #00d4ff, purple #7c3aed
+
+## Code Style
+- Use TypeScript strictly — no `any` unless absolutely necessary
+- Prefer functional components and hooks
+- Use Tailwind utility classes; avoid arbitrary inline style overrides unless needed for dynamic colors
+- Keep components in /src/app — no separate /components folder for MVP
+- "use client" only when required (interactivity, hooks)
+
+## Design System
+- Background: #030014 (neural-bg)
+- Surface: #0d0a2e (neural-surface)
+- Border: #1e1b4b (neural-border)
+- Cyan: #00d4ff (neural-cyan) — primary CTAs, triggers
+- Purple: #7c3aed (neural-purple) — AI features, conditions
+- Green: #22c55e (neural-green) — success, actions
+- Amber: #f59e0b (neural-amber) — warnings, fees
+
+## Workflow Node Colors
+- Trigger nodes: cyan border
+- Condition nodes: amber border
+- Action nodes: green border
+
+## API
+- All AI calls go through /api/ai-tools
+- Try Gemini first, fallback to OpenRouter, then mock
+- Never expose API keys in client code
+
+## School Domain
+- Primary market: India (INR pricing, WhatsApp-first)
+- Secondary: Global EdTech
+- Key workflows: Attendance Alert, Fee Escalation, Admission Pipeline
+- Mock school: Greenfield International School, 847 students
