@@ -1,370 +1,313 @@
 "use client";
-
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
-  GraduationCap,
-  Users,
-  CalendarCheck,
-  DollarSign,
-  Workflow,
-  Bot,
-  ArrowLeft,
-  Search,
-  Bell,
-  ChevronRight,
-  MessageCircle,
-  AlertTriangle,
-  CheckCircle,
-  Clock,
-  X,
-  Play,
-  Pause,
-  Plus,
-  BarChart3,
-  TrendingUp,
-  Loader2,
+  Users, GraduationCap, DollarSign, AlertTriangle, CheckCircle,
+  Zap, Brain, BarChart3, Settings, Plus,
+  RefreshCw, ChevronRight, Wifi
 } from "lucide-react";
+import {
+  fetchStudents, fetchStudentStats, fetchAttendanceSummary,
+  fetchFeeStats, fetchWorkflows, toggleWorkflow, callAITool,
+  createStudent, markAttendance
+} from "@/lib/api";
 
-const TABS = ["Overview", "Students", "Attendance", "Fees", "Workflows", "AI Tools"] as const;
-type Tab = typeof TABS[number];
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://intelliforge-eduflow-api.fly.dev";
 
-const MOCK_STUDENTS = [
-  { id: 1, name: "Arjun Sharma", grade: "10A", attendance: 94, feeStatus: "Paid", risk: "low" },
-  { id: 2, name: "Priya Patel", grade: "9B", attendance: 78, feeStatus: "Pending", risk: "medium" },
-  { id: 3, name: "Riya Singh", grade: "8C", attendance: 61, feeStatus: "Overdue", risk: "high" },
-  { id: 4, name: "Karan Mehta", grade: "7A", attendance: 69, feeStatus: "Overdue", risk: "high" },
-  { id: 5, name: "Ananya Gupta", grade: "11B", attendance: 91, feeStatus: "Paid", risk: "low" },
-  { id: 6, name: "Rahul Kumar", grade: "6A", attendance: 85, feeStatus: "Paid", risk: "low" },
-  { id: 7, name: "Sneha Nair", grade: "12A", attendance: 88, feeStatus: "Pending", risk: "low" },
-  { id: 8, name: "Vijay Rao", grade: "10B", attendance: 73, feeStatus: "Pending", risk: "medium" },
-  { id: 9, name: "Deepa Iyer", grade: "9A", attendance: 96, feeStatus: "Paid", risk: "low" },
-  { id: 10, name: "Rohan Joshi", grade: "8A", attendance: 66, feeStatus: "Overdue", risk: "high" },
-];
+type Student = {
+  id: number; name: string; grade: string; parent_name?: string;
+  parent_phone?: string; parent_email?: string; fee_status: string;
+  attendance_pct: number; risk_score: string; is_active: boolean; created_at: string;
+};
 
-const CLASSES = [
-  { name: "Grade 6A", attendance: 94, total: 32 },
-  { name: "Grade 6B", attendance: 89, total: 30 },
-  { name: "Grade 7A", attendance: 91, total: 35 },
-  { name: "Grade 7B", attendance: 86, total: 33 },
-  { name: "Grade 8A", attendance: 88, total: 34 },
-  { name: "Grade 8B", attendance: 93, total: 31 },
-  { name: "Grade 9A", attendance: 95, total: 36 },
-  { name: "Grade 9B", attendance: 82, total: 34 },
-];
+type Workflow = {
+  id: number; name: string; trigger_type: string; is_active: boolean; trigger_count: number; config: Record<string, unknown>;
+};
 
-const FEE_DEFAULTERS = [
-  { name: "Riya Singh", grade: "8C", amount: "₹18,500", days: 45, id: 1 },
-  { name: "Karan Mehta", grade: "7A", amount: "₹12,000", days: 38, id: 2 },
-  { name: "Rohan Joshi", grade: "8A", amount: "₹9,800", days: 22, id: 3 },
-  { name: "Vikram Patel", grade: "6B", amount: "₹15,200", days: 18, id: 4 },
-  { name: "Meera Doshi", grade: "10C", amount: "₹7,500", days: 12, id: 5 },
-];
-
-const WORKFLOWS = [
-  {
-    id: 1,
-    name: "Attendance Alert",
-    description: "Auto-alerts parents via WhatsApp on 3rd absence",
-    active: true,
-    lastTriggered: "2 hours ago",
-    triggerCount: 247,
-    nodes: ["Student Absent", "3rd Time?", "WhatsApp Parent"],
-  },
-  {
-    id: 2,
-    name: "Fee Escalation",
-    description: "Automatic late fee escalation and principal notification",
-    active: true,
-    lastTriggered: "1 day ago",
-    triggerCount: 89,
-    nodes: ["Fee Overdue", "Days > 7?", "Add Late Fee"],
-  },
-  {
-    id: 3,
-    name: "Admission Pipeline",
-    description: "End-to-end automated admission process management",
-    active: true,
-    lastTriggered: "3 hours ago",
-    triggerCount: 34,
-    nodes: ["Form Submitted", "Docs Verified?", "Book Interview"],
-  },
-  {
-    id: 4,
-    name: "Exam Notification",
-    description: "Hall tickets and results distribution automation",
-    active: false,
-    lastTriggered: "2 weeks ago",
-    triggerCount: 12,
-    nodes: ["Exam Scheduled", "7 Days Before?", "Send Hall Ticket"],
-  },
-  {
-    id: 5,
-    name: "Report Card Release",
-    description: "Automated report card generation and parent notification",
-    active: true,
-    lastTriggered: "1 week ago",
-    triggerCount: 156,
-    nodes: ["Results Finalised", "All Marks In?", "Generate & Send"],
-  },
-];
-
+// Template workflows to show when DB is empty
 const WORKFLOW_TEMPLATES = [
-  { name: "Custom Trigger", desc: "Build from scratch", icon: Plus },
-  { name: "Scheduled Task", desc: "Time-based automation", icon: Clock },
-  { name: "Event-based", desc: "React to school events", icon: Bell },
+  { name: "Attendance Alert", trigger_type: "attendance", description: "Auto-notify parents when student is absent", nodes: ["Student Absent", "3rd time?", "WhatsApp Parent", "Alert Counselor"] },
+  { name: "Fee Escalation", trigger_type: "fee", description: "Escalate overdue fees automatically", nodes: ["Fee Overdue", "Day 7 Reminder", "Late Fee Added", "Principal Alert"] },
+  { name: "Admission Pipeline", trigger_type: "admission", description: "Manage end-to-end admissions", nodes: ["Form Submitted", "Doc Check", "Interview", "Enrolled"] },
+  { name: "Exam Notification", trigger_type: "exam", description: "Exam scheduling and result workflow", nodes: ["Exam Scheduled", "Hall Ticket", "Results", "Report Card"] },
+  { name: "Staff Leave Approval", trigger_type: "staff", description: "Leave request approval chain", nodes: ["Leave Applied", "HOD Review", "Approved/Rejected", "Calendar Updated"] },
 ];
 
-const ACTIVITY = [
-  { text: "Rahul Sharma marked absent — WhatsApp sent to parent", time: "2 min ago", type: "alert" },
-  { text: "Fee reminder sent to 23 defaulters", time: "15 min ago", type: "fee" },
-  { text: "Grade 10 results published to parent portal", time: "1 hr ago", type: "success" },
-  { text: "New admission: Priya Patel enrolled in Grade 9B", time: "2 hrs ago", type: "success" },
-  { text: "Workflow triggered: Fee escalation for 3 students", time: "3 hrs ago", type: "workflow" },
-];
-
-const AT_RISK = [
-  { name: "Riya Singh", grade: "9A", attendance: 61, grade_avg: 48, reasons: ["Attendance < 65%", "Failing 3 subjects"] },
-  { name: "Karan Mehta", grade: "8B", attendance: 69, grade_avg: 55, reasons: ["Fee overdue 45 days", "Attendance declining"] },
-  { name: "Ananya Singh", grade: "10C", attendance: 75, grade_avg: 52, reasons: ["Grade drop: 78% → 52%", "Family issue noted"] },
-];
-
-export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("Overview");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [workflows, setWorkflows] = useState(WORKFLOWS);
-  const [showWorkflowModal, setShowWorkflowModal] = useState(false);
-  const [aiSubTab, setAiSubTab] = useState<"report-card" | "at-risk" | "fee-prediction">("report-card");
-  const [reportForm, setReportForm] = useState({ studentName: "", marks: "" });
-  const [aiResult, setAiResult] = useState<string | null>(null);
-  const [aiSource, setAiSource] = useState<string>("");
+export default function Dashboard() {
+  const [activeTab, setActiveTab] = useState("overview");
+  const [students, setStudents] = useState<Student[]>([]);
+  const [studentStats, setStudentStats] = useState({ total: 0, at_risk: 0, fee_overdue: 0 });
+  const [attendance, setAttendance] = useState({ present: 0, absent: 0, date: "" });
+  const [feeStats, setFeeStats] = useState({ total: 0, collected: 0, overdue_count: 0 });
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [aiResult, setAiResult] = useState("");
+  const [aiTool, setAiTool] = useState("report-card");
   const [aiLoading, setAiLoading] = useState(false);
-  const [reminderSent, setReminderSent] = useState<Record<number, boolean>>({});
-  const [whatsappSent, setWhatsappSent] = useState(false);
-  const [atRiskData, setAtRiskData] = useState<any[]>([]);
-  const [feePredData, setFeePredData] = useState<any[]>([]);
+  const [aiInput, setAiInput] = useState("");
+  const [studentFilter, setStudentFilter] = useState<string | undefined>(undefined);
+  const [showAddStudent, setShowAddStudent] = useState(false);
+  const [newStudent, setNewStudent] = useState({ name: "", grade: "", parent_name: "", parent_phone: "", parent_email: "" });
+  const [apiConnected, setApiConnected] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState("");
 
-  const filteredStudents = MOCK_STUDENTS.filter(
-    (s) =>
-      s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.grade.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const toggleWorkflow = (id: number) => {
-    setWorkflows((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, active: !w.active } : w))
-    );
-  };
-
-  const callAI = async (tool: string, data?: any) => {
-    setAiLoading(true);
-    setAiResult(null);
+  const loadData = useCallback(async () => {
+    setLoading(true);
     try {
-      const res = await fetch("/api/ai-tools", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tool, data }),
-      });
-      const json = await res.json();
-      setAiResult(json.result);
-      setAiSource(json.source);
-      if (tool === "at-risk") {
-        try { setAtRiskData(JSON.parse(json.result)); } catch {}
-      }
-      if (tool === "fee-prediction") {
-        try { setFeePredData(JSON.parse(json.result)); } catch {}
-      }
+      const [stats, att, fees, wfs, studs] = await Promise.all([
+        fetchStudentStats(),
+        fetchAttendanceSummary(),
+        fetchFeeStats(),
+        fetchWorkflows(),
+        fetchStudents(studentFilter ? { risk_score: studentFilter } : undefined),
+      ]);
+      setStudentStats(stats);
+      setAttendance(att);
+      setFeeStats(fees);
+      setWorkflows(wfs);
+      setStudents(studs);
+      setApiConnected(true);
+      setLastUpdated(new Date().toLocaleTimeString("en-IN"));
     } catch {
-      setAiResult("Error connecting to AI service. Please try again.");
+      setApiConnected(false);
     } finally {
-      setAiLoading(false);
+      setLoading(false);
     }
+  }, [studentFilter]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const handleToggleWorkflow = async (id: number) => {
+    await toggleWorkflow(id);
+    const updated = await fetchWorkflows();
+    setWorkflows(updated);
   };
 
-  const nodeColor = (i: number) => {
-    if (i === 0) return { bg: "rgba(0,212,255,0.15)", border: "rgba(0,212,255,0.4)", text: "#00d4ff" };
-    if (i === 1) return { bg: "rgba(245,158,11,0.15)", border: "rgba(245,158,11,0.4)", text: "#f59e0b" };
-    return { bg: "rgba(34,197,94,0.15)", border: "rgba(34,197,94,0.4)", text: "#22c55e" };
+  const handleActivateTemplate = async (tpl: typeof WORKFLOW_TEMPLATES[0]) => {
+    const res = await fetch(`${API_URL}/api/workflows/`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: tpl.name, trigger_type: tpl.trigger_type, config: { nodes: tpl.nodes } })
+    });
+    const wf = await res.json();
+    setWorkflows(prev => [...prev, wf]);
   };
+
+  const handleAddStudent = async () => {
+    if (!newStudent.name || !newStudent.grade) return;
+    await createStudent(newStudent);
+    setShowAddStudent(false);
+    setNewStudent({ name: "", grade: "", parent_name: "", parent_phone: "", parent_email: "" });
+    const [studs, stats] = await Promise.all([fetchStudents(), fetchStudentStats()]);
+    setStudents(studs);
+    setStudentStats(stats);
+  };
+
+  const handleMarkAttendance = async (studentId: number, status: "present" | "absent") => {
+    const today = new Date().toISOString().split("T")[0];
+    await markAttendance({ student_id: studentId, date: today, status });
+    const att = await fetchAttendanceSummary();
+    setAttendance(att);
+  };
+
+  const handleAITool = async () => {
+    setAiLoading(true);
+    setAiResult("");
+    const data = aiTool === "report-card" ? { studentName: "Student", marks: aiInput } : {};
+    const res = await callAITool(aiTool, data);
+    setAiResult(typeof res.result === "string" ? res.result : JSON.stringify(res.result, null, 2));
+    setAiLoading(false);
+  };
+
+  const tabs = [
+    { id: "overview", label: "Overview", icon: BarChart3 },
+    { id: "students", label: "Students", icon: Users },
+    { id: "attendance", label: "Attendance", icon: CheckCircle },
+    { id: "fees", label: "Fees", icon: DollarSign },
+    { id: "workflows", label: "Workflows", icon: Settings },
+    { id: "ai", label: "AI Tools", icon: Brain },
+  ];
+
+  const feeCollectionPct = feeStats.total > 0 ? Math.round((feeStats.collected / feeStats.total) * 100) : 0;
+  const attendancePct = (attendance.present + attendance.absent) > 0
+    ? Math.round((attendance.present / (attendance.present + attendance.absent)) * 100) : 0;
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: "#030014" }}>
-      {/* Top Nav */}
-      <nav className="border-b border-neural-border sticky top-0 z-40" style={{ backgroundColor: "rgba(3,0,20,0.97)", backdropFilter: "blur(12px)" }}>
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex items-center justify-between h-14">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "linear-gradient(135deg, #00d4ff, #7c3aed)" }}>
-                <GraduationCap className="w-4 h-4 text-white" />
-              </div>
-              <span className="font-bold text-white hidden sm:block">EduFlow Dashboard</span>
-              <span className="text-gray-500 text-sm hidden md:block">— Greenfield International School</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="px-2 py-1 rounded-md text-xs font-semibold" style={{ backgroundColor: "rgba(245,158,11,0.2)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.3)" }}>
-                Demo Mode
-              </span>
-              <Link href="/" className="flex items-center gap-1 text-sm text-gray-400 hover:text-neural-cyan transition-colors">
-                <ArrowLeft className="w-4 h-4" /> Back to site
-              </Link>
-            </div>
-          </div>
+    <div style={{ backgroundColor: "#030014", minHeight: "100vh", color: "white", fontFamily: "system-ui, sans-serif" }}>
+      {/* Top nav */}
+      <div style={{ borderBottom: "1px solid #1e1b4b", padding: "16px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <GraduationCap size={24} color="#00d4ff" />
+          <span style={{ fontWeight: 700, fontSize: "18px" }}>EduFlow Dashboard</span>
+          <span style={{ fontSize: "12px", color: "#6b7280", marginLeft: "8px" }}>Greenfield International School</span>
         </div>
-      </nav>
-
-      {/* Tab Bar */}
-      <div className="border-b border-neural-border" style={{ backgroundColor: "rgba(13,10,46,0.6)" }}>
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex gap-1 overflow-x-auto py-2 scrollbar-thin">
-            {TABS.map((tab) => (
-              <button
-                key={tab}
-                onClick={() => { setActiveTab(tab); setAiResult(null); }}
-                className="flex-shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-all"
-                style={
-                  activeTab === tab
-                    ? { backgroundColor: "rgba(0,212,255,0.15)", color: "#00d4ff", border: "1px solid rgba(0,212,255,0.3)" }
-                    : { color: "#6b7280", backgroundColor: "transparent" }
-                }
-              >
-                {tab}
-              </button>
-            ))}
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px" }}>
+            <Wifi size={12} color={apiConnected ? "#22c55e" : "#ef4444"} />
+            <span style={{ color: apiConnected ? "#22c55e" : "#ef4444" }}>
+              {apiConnected ? `Live • Neon DB` : "Offline"}
+            </span>
           </div>
+          <span style={{ fontSize: "11px", color: "#6b7280" }}>Updated: {lastUpdated}</span>
+          <button onClick={loadData} style={{ background: "none", border: "none", color: "#00d4ff", cursor: "pointer" }}>
+            <RefreshCw size={16} />
+          </button>
+          <Link href="/" style={{ fontSize: "13px", color: "#00d4ff", textDecoration: "none" }}>← Back to site</Link>
+          <span style={{ fontSize: "11px", padding: "2px 8px", borderRadius: "12px", background: "#1e1b4b", color: "#7c3aed" }}>Demo Mode</span>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      {/* Tabs */}
+      <div style={{ borderBottom: "1px solid #1e1b4b", padding: "0 24px", display: "flex", gap: "4px" }}>
+        {tabs.map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+            padding: "12px 16px", background: "none", border: "none", cursor: "pointer",
+            color: activeTab === tab.id ? "#00d4ff" : "#6b7280",
+            borderBottom: activeTab === tab.id ? "2px solid #00d4ff" : "2px solid transparent",
+            display: "flex", alignItems: "center", gap: "6px", fontSize: "14px",
+          }}>
+            <tab.icon size={14} />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding: "24px", maxWidth: "1200px", margin: "0 auto" }}>
+        {loading && (
+          <div style={{ textAlign: "center", padding: "60px", color: "#6b7280" }}>
+            <RefreshCw size={32} style={{ animation: "spin 1s linear infinite", margin: "0 auto 12px" }} />
+            <div>Connecting to Neon PostgreSQL…</div>
+          </div>
+        )}
+
         {/* OVERVIEW TAB */}
-        {activeTab === "Overview" && (
-          <div className="space-y-6">
-            {/* Stat Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {!loading && activeTab === "overview" && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
               {[
-                { label: "Total Students", value: "847", icon: Users, color: "#00d4ff", change: "+12 this month" },
-                { label: "Attendance Today", value: "91.2%", icon: CalendarCheck, color: "#22c55e", change: "↑ 2.1% vs yesterday" },
-                { label: "Fee Collection", value: "₹12.4L", icon: DollarSign, color: "#f59e0b", change: "of ₹15.2L target (81.6%)" },
-                { label: "Active Workflows", value: "7", icon: Workflow, color: "#7c3aed", change: "2 triggered today" },
-              ].map((card) => (
-                <div key={card.label} className="rounded-xl p-5 card-hover" style={{ backgroundColor: "rgba(13,10,46,0.8)", border: "1px solid #1e1b4b" }}>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs text-gray-500 uppercase tracking-wider">{card.label}</span>
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${card.color}20` }}>
-                      <card.icon className="w-4 h-4" style={{ color: card.color }} />
+                { label: "Total Students", value: studentStats.total, icon: Users, color: "#00d4ff", sub: "Active enrolments" },
+                { label: "Attendance Today", value: `${attendancePct}%`, icon: CheckCircle, color: "#22c55e", sub: `${attendance.present} present, ${attendance.absent} absent` },
+                { label: "Fee Collection", value: `${feeCollectionPct}%`, icon: DollarSign, color: "#f59e0b", sub: `\u20b9${(feeStats.collected/100000).toFixed(1)}L of \u20b9${(feeStats.total/100000).toFixed(1)}L` },
+                { label: "At-Risk Students", value: studentStats.at_risk, icon: AlertTriangle, color: "#ef4444", sub: `${studentStats.fee_overdue} fee overdue` },
+              ].map((card, i) => (
+                <div key={i} style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "20px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "8px" }}>{card.label}</div>
+                      <div style={{ fontSize: "28px", fontWeight: 700, color: card.color }}>{card.value}</div>
+                      <div style={{ fontSize: "12px", color: "#4b5563", marginTop: "4px" }}>{card.sub}</div>
                     </div>
+                    <card.icon size={24} color={card.color} style={{ opacity: 0.6 }} />
                   </div>
-                  <div className="text-2xl font-black text-white mb-1">{card.value}</div>
-                  <div className="text-xs" style={{ color: card.color }}>{card.change}</div>
                 </div>
               ))}
             </div>
 
-            <div className="grid md:grid-cols-2 gap-6">
-              {/* Activity Feed */}
-              <div className="rounded-xl p-5" style={{ backgroundColor: "rgba(13,10,46,0.8)", border: "1px solid #1e1b4b" }}>
-                <h3 className="font-bold text-white mb-4 flex items-center gap-2"><Bell className="w-4 h-4 text-neural-cyan" /> Recent Activity</h3>
-                <div className="space-y-3">
-                  {ACTIVITY.map((a, i) => (
-                    <div key={i} className="flex items-start gap-3 py-2 border-b border-neural-border last:border-0">
-                      <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0" style={{
-                        backgroundColor:
-                          a.type === "alert" ? "#ef4444" :
-                          a.type === "fee" ? "#f59e0b" :
-                          a.type === "success" ? "#22c55e" : "#7c3aed"
-                      }} />
-                      <div className="flex-1">
-                        <p className="text-sm text-gray-300">{a.text}</p>
-                        <p className="text-xs text-gray-600 mt-0.5">{a.time}</p>
-                      </div>
+            {/* Recent activity */}
+            <div style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "20px" }}>
+              <div style={{ fontWeight: 600, marginBottom: "16px", color: "#00d4ff" }}>Live from Neon PostgreSQL</div>
+              {students.slice(0, 5).map(s => (
+                <div key={s.id} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #1e1b4b" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div style={{ width: "32px", height: "32px", borderRadius: "50%", background: "#1e1b4b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px" }}>
+                      {s.name.charAt(0)}
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* At-Risk Panel */}
-              <div className="rounded-xl p-5" style={{ backgroundColor: "rgba(13,10,46,0.8)", border: "1px solid #1e1b4b" }}>
-                <h3 className="font-bold text-white mb-4 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-neural-amber" /> At-Risk Students</h3>
-                <div className="space-y-3">
-                  {AT_RISK.map((s, i) => (
-                    <div key={i} className="rounded-lg p-3" style={{ backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-semibold text-white text-sm">{s.name}</span>
-                        <span className="text-xs text-gray-500">{s.grade}</span>
-                      </div>
-                      <div className="flex gap-4 text-xs text-gray-400 mb-2">
-                        <span>Attendance: <span className="text-red-400">{s.attendance}%</span></span>
-                        <span>Avg: <span className="text-red-400">{s.grade_avg}%</span></span>
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {s.reasons.map((r, j) => (
-                          <span key={j} className="px-2 py-0.5 rounded text-xs" style={{ backgroundColor: "rgba(239,68,68,0.15)", color: "#fca5a5" }}>{r}</span>
-                        ))}
-                      </div>
+                    <div>
+                      <div style={{ fontSize: "14px", fontWeight: 500 }}>{s.name}</div>
+                      <div style={{ fontSize: "12px", color: "#6b7280" }}>Grade {s.grade}</div>
                     </div>
-                  ))}
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <span style={{ fontSize: "12px", padding: "2px 8px", borderRadius: "12px", background: s.risk_score === "high" ? "#450a0a" : s.risk_score === "medium" ? "#451a03" : "#052e16", color: s.risk_score === "high" ? "#ef4444" : s.risk_score === "medium" ? "#f59e0b" : "#22c55e" }}>
+                      {s.risk_score} risk
+                    </span>
+                    <span style={{ fontSize: "12px", padding: "2px 8px", borderRadius: "12px", background: s.fee_status === "overdue" ? "#450a0a" : "#1e1b4b", color: s.fee_status === "overdue" ? "#ef4444" : "#6b7280" }}>
+                      {s.fee_status}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              ))}
+              {students.length === 0 && <div style={{ color: "#6b7280", textAlign: "center", padding: "20px" }}>No students yet. Add one in the Students tab.</div>}
             </div>
           </div>
         )}
 
         {/* STUDENTS TAB */}
-        {activeTab === "Students" && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="flex-1 relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-                <input
-                  type="text"
-                  placeholder="Search by name or grade..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2.5 rounded-lg text-sm text-white placeholder-gray-600 outline-none focus:border-neural-cyan"
-                  style={{ backgroundColor: "rgba(13,10,46,0.8)", border: "1px solid #1e1b4b" }}
-                />
+        {!loading && activeTab === "students" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
+              <div style={{ display: "flex", gap: "8px" }}>
+                {[undefined, "high", "medium"].map(f => (
+                  <button key={String(f)} onClick={() => setStudentFilter(f)} style={{
+                    padding: "6px 16px", borderRadius: "20px", border: "1px solid", cursor: "pointer", fontSize: "13px",
+                    background: studentFilter === f ? "#00d4ff" : "transparent",
+                    color: studentFilter === f ? "#030014" : "#00d4ff",
+                    borderColor: "#00d4ff"
+                  }}>
+                    {f === undefined ? "All" : f === "high" ? "At-Risk" : "Medium Risk"}
+                  </button>
+                ))}
               </div>
+              <button onClick={() => setShowAddStudent(!showAddStudent)} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 16px", background: "#00d4ff", color: "#030014", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600, fontSize: "13px" }}>
+                <Plus size={14} /> Add Student
+              </button>
             </div>
 
-            <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #1e1b4b" }}>
-              <table className="w-full">
+            {showAddStudent && (
+              <div style={{ background: "#0d0a2e", border: "1px solid #00d4ff", borderRadius: "12px", padding: "20px", marginBottom: "16px" }}>
+                <div style={{ fontWeight: 600, marginBottom: "12px", color: "#00d4ff" }}>Add New Student to Neon DB</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", marginBottom: "12px" }}>
+                  {[
+                    { key: "name", placeholder: "Student name *" },
+                    { key: "grade", placeholder: "Grade (e.g. 10A) *" },
+                    { key: "parent_name", placeholder: "Parent name" },
+                    { key: "parent_phone", placeholder: "Parent phone" },
+                    { key: "parent_email", placeholder: "Parent email" },
+                  ].map(f => (
+                    <input key={f.key} placeholder={f.placeholder} value={(newStudent as Record<string, string>)[f.key]} onChange={e => setNewStudent(prev => ({ ...prev, [f.key]: e.target.value }))}
+                      style={{ padding: "8px 12px", background: "#030014", border: "1px solid #1e1b4b", borderRadius: "8px", color: "white", fontSize: "13px" }} />
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button onClick={handleAddStudent} style={{ padding: "8px 20px", background: "#7c3aed", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600 }}>Save to Neon</button>
+                  <button onClick={() => setShowAddStudent(false)} style={{ padding: "8px 20px", background: "transparent", color: "#6b7280", border: "1px solid #1e1b4b", borderRadius: "8px", cursor: "pointer" }}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            <div style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
-                  <tr style={{ backgroundColor: "rgba(13,10,46,0.9)" }}>
-                    {["Name", "Grade", "Attendance", "Fee Status", "Risk"].map((h) => (
-                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">{h}</th>
+                  <tr style={{ borderBottom: "1px solid #1e1b4b" }}>
+                    {["ID", "Name", "Grade", "Attendance", "Fee Status", "Risk", "Parent Contact"].map(h => (
+                      <th key={h} style={{ padding: "12px 16px", textAlign: "left", fontSize: "12px", color: "#6b7280", fontWeight: 600 }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-neural-border">
-                  {filteredStudents.map((s) => (
-                    <tr key={s.id} className="hover:bg-neural-surface transition-colors" style={{ backgroundColor: "rgba(3,0,20,0.4)" }}>
-                      <td className="px-4 py-3 text-sm font-medium text-white">{s.name}</td>
-                      <td className="px-4 py-3 text-sm text-gray-400">{s.grade}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 h-1.5 rounded-full bg-neural-border overflow-hidden">
-                            <div className="h-full rounded-full" style={{ width: `${s.attendance}%`, backgroundColor: s.attendance >= 85 ? "#22c55e" : s.attendance >= 75 ? "#f59e0b" : "#ef4444" }} />
-                          </div>
-                          <span className="text-sm text-gray-400">{s.attendance}%</span>
-                        </div>
+                <tbody>
+                  {students.map(s => (
+                    <tr key={s.id} style={{ borderBottom: "1px solid #1e1b4b" }}>
+                      <td style={{ padding: "12px 16px", fontSize: "13px", color: "#6b7280" }}>#{s.id}</td>
+                      <td style={{ padding: "12px 16px", fontSize: "14px", fontWeight: 500 }}>{s.name}</td>
+                      <td style={{ padding: "12px 16px", fontSize: "13px", color: "#00d4ff" }}>{s.grade}</td>
+                      <td style={{ padding: "12px 16px", fontSize: "13px" }}>
+                        <span style={{ color: s.attendance_pct < 70 ? "#ef4444" : s.attendance_pct < 85 ? "#f59e0b" : "#22c55e" }}>{s.attendance_pct}%</span>
                       </td>
-                      <td className="px-4 py-3">
-                        <span className="px-2 py-1 rounded-full text-xs font-semibold" style={{
-                          backgroundColor: s.feeStatus === "Paid" ? "rgba(34,197,94,0.15)" : s.feeStatus === "Pending" ? "rgba(245,158,11,0.15)" : "rgba(239,68,68,0.15)",
-                          color: s.feeStatus === "Paid" ? "#22c55e" : s.feeStatus === "Pending" ? "#f59e0b" : "#ef4444",
-                        }}>
-                          {s.feeStatus}
+                      <td style={{ padding: "12px 16px" }}>
+                        <span style={{ fontSize: "12px", padding: "2px 8px", borderRadius: "12px", background: s.fee_status === "overdue" ? "#450a0a" : s.fee_status === "pending" ? "#451a03" : "#052e16", color: s.fee_status === "overdue" ? "#ef4444" : s.fee_status === "pending" ? "#f59e0b" : "#22c55e" }}>
+                          {s.fee_status}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
-                        <span className="px-2 py-1 rounded-full text-xs font-semibold" style={{
-                          backgroundColor: s.risk === "low" ? "rgba(34,197,94,0.15)" : s.risk === "medium" ? "rgba(245,158,11,0.15)" : "rgba(239,68,68,0.15)",
-                          color: s.risk === "low" ? "#22c55e" : s.risk === "medium" ? "#f59e0b" : "#ef4444",
-                        }}>
-                          {s.risk.toUpperCase()}
+                      <td style={{ padding: "12px 16px" }}>
+                        <span style={{ fontSize: "12px", padding: "2px 8px", borderRadius: "12px", background: s.risk_score === "high" ? "#450a0a" : s.risk_score === "medium" ? "#451a03" : "#052e16", color: s.risk_score === "high" ? "#ef4444" : s.risk_score === "medium" ? "#f59e0b" : "#22c55e" }}>
+                          {s.risk_score}
                         </span>
                       </td>
+                      <td style={{ padding: "12px 16px", fontSize: "12px", color: "#6b7280" }}>{s.parent_phone || "\u2014"}</td>
                     </tr>
                   ))}
+                  {students.length === 0 && (
+                    <tr><td colSpan={7} style={{ padding: "40px", textAlign: "center", color: "#6b7280" }}>No students found. Add your first student above.</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -372,42 +315,38 @@ export default function DashboardPage() {
         )}
 
         {/* ATTENDANCE TAB */}
-        {activeTab === "Attendance" && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold text-white">Today's Attendance</h2>
-                <p className="text-gray-500 text-sm mt-1">March 18, 2026 — 91.2% overall</p>
+        {!loading && activeTab === "attendance" && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "24px" }}>
+              <div style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "20px", textAlign: "center" }}>
+                <div style={{ fontSize: "36px", fontWeight: 700, color: "#22c55e" }}>{attendance.present}</div>
+                <div style={{ color: "#6b7280", fontSize: "14px" }}>Present Today</div>
               </div>
-              <button
-                onClick={() => setWhatsappSent(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all hover:scale-105"
-                style={{ background: "linear-gradient(135deg, #22c55e, #16a34a)", color: "white" }}
-              >
-                <MessageCircle className="w-4 h-4" />
-                {whatsappSent ? "✓ Alerts Sent to 18 Parents" : "Send WhatsApp Alerts (18 absent)"}
-              </button>
+              <div style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "20px", textAlign: "center" }}>
+                <div style={{ fontSize: "36px", fontWeight: 700, color: "#ef4444" }}>{attendance.absent}</div>
+                <div style={{ color: "#6b7280", fontSize: "14px" }}>Absent Today</div>
+              </div>
+              <div style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "20px", textAlign: "center" }}>
+                <div style={{ fontSize: "36px", fontWeight: 700, color: "#00d4ff" }}>{attendancePct}%</div>
+                <div style={{ color: "#6b7280", fontSize: "14px" }}>Attendance Rate</div>
+              </div>
             </div>
-
-            <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-4">
-              {CLASSES.map((cls) => (
-                <div key={cls.name} className="rounded-xl p-4 card-hover" style={{ backgroundColor: "rgba(13,10,46,0.8)", border: "1px solid #1e1b4b" }}>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="font-semibold text-white text-sm">{cls.name}</span>
-                    <span className="text-xs text-gray-500">{cls.total} students</span>
+            <div style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "20px" }}>
+              <div style={{ fontWeight: 600, marginBottom: "16px", color: "#00d4ff" }}>Mark Today&apos;s Attendance</div>
+              {students.map(s => (
+                <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #1e1b4b" }}>
+                  <div>
+                    <div style={{ fontSize: "14px", fontWeight: 500 }}>{s.name}</div>
+                    <div style={{ fontSize: "12px", color: "#6b7280" }}>Grade {s.grade}</div>
                   </div>
-                  <div className="mb-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-gray-500">Present</span>
-                      <span className="text-sm font-bold" style={{ color: cls.attendance >= 90 ? "#22c55e" : cls.attendance >= 80 ? "#f59e0b" : "#ef4444" }}>{cls.attendance}%</span>
-                    </div>
-                    <div className="w-full h-2 rounded-full bg-neural-border overflow-hidden">
-                      <div className="h-full rounded-full transition-all" style={{ width: `${cls.attendance}%`, backgroundColor: cls.attendance >= 90 ? "#22c55e" : cls.attendance >= 80 ? "#f59e0b" : "#ef4444" }} />
-                    </div>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button onClick={() => handleMarkAttendance(s.id, "present")} style={{ padding: "4px 12px", background: "#052e16", color: "#22c55e", border: "1px solid #22c55e", borderRadius: "6px", cursor: "pointer", fontSize: "12px" }}>
+                      Present
+                    </button>
+                    <button onClick={() => handleMarkAttendance(s.id, "absent")} style={{ padding: "4px 12px", background: "#450a0a", color: "#ef4444", border: "1px solid #ef4444", borderRadius: "6px", cursor: "pointer", fontSize: "12px" }}>
+                      Absent
+                    </button>
                   </div>
-                  <button className="w-full mt-2 py-1.5 rounded-lg text-xs font-medium transition-colors" style={{ backgroundColor: "rgba(0,212,255,0.1)", color: "#00d4ff", border: "1px solid rgba(0,212,255,0.2)" }}>
-                    Mark Attendance
-                  </button>
                 </div>
               ))}
             </div>
@@ -415,331 +354,118 @@ export default function DashboardPage() {
         )}
 
         {/* FEES TAB */}
-        {activeTab === "Fees" && (
-          <div className="space-y-6">
-            {/* Collection Progress */}
-            <div className="rounded-xl p-6" style={{ backgroundColor: "rgba(13,10,46,0.8)", border: "1px solid #1e1b4b" }}>
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="font-bold text-white">March 2026 Collection</h3>
-                  <p className="text-sm text-gray-500 mt-1">₹12.4L collected of ₹15.2L target</p>
-                </div>
-                <div className="text-right">
-                  <div className="text-3xl font-black text-neural-amber">81.6%</div>
-                  <div className="text-xs text-gray-500">collection rate</div>
-                </div>
+        {!loading && activeTab === "fees" && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "24px" }}>
+              <div style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "20px" }}>
+                <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "8px" }}>Total Billed</div>
+                <div style={{ fontSize: "28px", fontWeight: 700, color: "#00d4ff" }}>\u20b9{(feeStats.total/100000).toFixed(1)}L</div>
               </div>
-              <div className="w-full h-4 rounded-full bg-neural-border overflow-hidden">
-                <div className="h-full rounded-full transition-all" style={{ width: "81.6%", background: "linear-gradient(90deg, #f59e0b, #22c55e)" }} />
+              <div style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "20px" }}>
+                <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "8px" }}>Collected</div>
+                <div style={{ fontSize: "28px", fontWeight: 700, color: "#22c55e" }}>\u20b9{(feeStats.collected/100000).toFixed(1)}L</div>
               </div>
-              <div className="flex justify-between text-xs text-gray-500 mt-2">
-                <span>₹0</span>
-                <span>₹12.4L collected</span>
-                <span>₹15.2L target</span>
+              <div style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "20px" }}>
+                <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "8px" }}>Overdue Records</div>
+                <div style={{ fontSize: "28px", fontWeight: 700, color: "#ef4444" }}>{feeStats.overdue_count}</div>
               </div>
             </div>
-
-            <div className="grid md:grid-cols-3 gap-6">
-              {/* Defaulters */}
-              <div className="md:col-span-2">
-                <h3 className="font-bold text-white mb-4 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-neural-amber" /> Fee Defaulters</h3>
-                <div className="space-y-3">
-                  {FEE_DEFAULTERS.map((d) => (
-                    <div key={d.id} className="rounded-xl p-4 flex items-center justify-between" style={{ backgroundColor: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}>
-                      <div>
-                        <div className="font-semibold text-white text-sm">{d.name}</div>
-                        <div className="text-xs text-gray-500 mt-0.5">Grade {d.grade} • Overdue {d.days} days</div>
-                      </div>
-                      <div className="text-right mr-4">
-                        <div className="font-bold text-neural-amber">{d.amount}</div>
-                        <div className="text-xs text-gray-600">overdue</div>
-                      </div>
-                      <button
-                        onClick={() => setReminderSent((prev) => ({ ...prev, [d.id]: true }))}
-                        className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                        style={
-                          reminderSent[d.id]
-                            ? { backgroundColor: "rgba(34,197,94,0.15)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.3)" }
-                            : { backgroundColor: "rgba(245,158,11,0.15)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.3)" }
-                        }
-                      >
-                        {reminderSent[d.id] ? "✓ Sent" : "Send Reminder"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
+            <div style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "20px" }}>
+              <div style={{ fontWeight: 600, marginBottom: "12px", color: "#f59e0b" }}>Collection Progress</div>
+              <div style={{ background: "#1e1b4b", borderRadius: "8px", height: "12px", overflow: "hidden" }}>
+                <div style={{ width: `${feeCollectionPct}%`, height: "100%", background: "linear-gradient(90deg, #f59e0b, #22c55e)", borderRadius: "8px" }} />
               </div>
-
-              {/* Fee Breakdown */}
-              <div className="rounded-xl p-5" style={{ backgroundColor: "rgba(13,10,46,0.8)", border: "1px solid #1e1b4b" }}>
-                <h3 className="font-bold text-white mb-4 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-neural-purple" /> Fee Breakdown</h3>
-                <div className="space-y-3">
-                  {[
-                    { label: "Tuition", pct: 60, color: "#00d4ff" },
-                    { label: "Transport", pct: 20, color: "#7c3aed" },
-                    { label: "Activities", pct: 15, color: "#22c55e" },
-                    { label: "Other", pct: 5, color: "#f59e0b" },
-                  ].map((item) => (
-                    <div key={item.label}>
-                      <div className="flex items-center justify-between text-sm mb-1">
-                        <span className="text-gray-400">{item.label}</span>
-                        <span className="font-semibold" style={{ color: item.color }}>{item.pct}%</span>
-                      </div>
-                      <div className="w-full h-2 rounded-full bg-neural-border overflow-hidden">
-                        <div className="h-full rounded-full" style={{ width: `${item.pct}%`, backgroundColor: item.color }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              <div style={{ marginTop: "8px", fontSize: "14px", color: "#6b7280" }}>{feeCollectionPct}% collected this month</div>
+              <div style={{ marginTop: "16px", fontSize: "13px", color: "#6b7280" }}>
+                Add fee records via <code style={{ color: "#00d4ff" }}>POST /api/fees/</code> to see real data here.
               </div>
             </div>
           </div>
         )}
 
         {/* WORKFLOWS TAB */}
-        {activeTab === "Workflows" && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold text-white">Active Workflows</h2>
-              <button
-                onClick={() => setShowWorkflowModal(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all hover:scale-105"
-                style={{ background: "linear-gradient(135deg, #00d4ff, #7c3aed)", color: "white" }}
-              >
-                <Plus className="w-4 h-4" /> New Workflow
-              </button>
+        {!loading && activeTab === "workflows" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div style={{ fontWeight: 600, color: "#00d4ff" }}>{workflows.length > 0 ? `${workflows.length} Active Workflows` : "Workflow Templates"}</div>
             </div>
-
-            <div className="space-y-4">
-              {workflows.map((wf) => (
-                <div key={wf.id} className="rounded-xl p-5 card-hover" style={{ backgroundColor: "rgba(13,10,46,0.8)", border: "1px solid #1e1b4b" }}>
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <div className="flex items-center gap-3 mb-1">
-                        <h3 className="font-bold text-white">{wf.name}</h3>
-                        <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={
-                          wf.active
-                            ? { backgroundColor: "rgba(34,197,94,0.15)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.3)" }
-                            : { backgroundColor: "rgba(107,114,128,0.15)", color: "#6b7280", border: "1px solid rgba(107,114,128,0.3)" }
-                        }>
-                          {wf.active ? "Active" : "Paused"}
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-500">{wf.description}</p>
-                    </div>
-                    <button
-                      onClick={() => toggleWorkflow(wf.id)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                      style={
-                        wf.active
-                          ? { backgroundColor: "rgba(245,158,11,0.15)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.3)" }
-                          : { backgroundColor: "rgba(34,197,94,0.15)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.3)" }
-                      }
-                    >
-                      {wf.active ? <><Pause className="w-3 h-3" /> Pause</> : <><Play className="w-3 h-3" /> Resume</>}
+            {(workflows.length > 0 ? workflows.map(wf => ({
+              id: wf.id, name: wf.name, description: `Trigger: ${wf.trigger_type}`, is_active: wf.is_active, trigger_count: wf.trigger_count,
+              nodes: (wf.config as Record<string, string[]>).nodes || ["Trigger", "Condition", "Action"]
+            })) : WORKFLOW_TEMPLATES.map(t => ({ ...t, id: 0, is_active: false, trigger_count: 0 }))).map((wf, i) => (
+              <div key={i} style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "20px", marginBottom: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: "15px" }}>{wf.name}</div>
+                    <div style={{ fontSize: "13px", color: "#6b7280", marginTop: "4px" }}>{wf.description} • {wf.trigger_count} triggers</div>
+                  </div>
+                  {wf.id > 0 ? (
+                    <button onClick={() => handleToggleWorkflow(wf.id)} style={{ padding: "6px 14px", background: wf.is_active ? "#052e16" : "#1e1b4b", color: wf.is_active ? "#22c55e" : "#6b7280", border: `1px solid ${wf.is_active ? "#22c55e" : "#1e1b4b"}`, borderRadius: "20px", cursor: "pointer", fontSize: "12px" }}>
+                      {wf.is_active ? "\u25cf Active" : "\u25cb Paused"}
                     </button>
-                  </div>
-
-                  {/* Mini flow */}
-                  <div className="flex items-center gap-2 mb-4">
-                    {wf.nodes.map((node, i) => {
-                      const c = nodeColor(i);
-                      return (
-                        <div key={i} className="flex items-center gap-2">
-                          <div className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: c.bg, border: `1px solid ${c.border}`, color: c.text }}>
-                            {node}
-                          </div>
-                          {i < wf.nodes.length - 1 && <span className="text-gray-600 text-sm">→</span>}
-                        </div>
-                      );
-                    })}
-                    <span className="text-gray-600 text-sm">→ ···</span>
-                  </div>
-
-                  <div className="flex items-center gap-4 text-xs text-gray-600">
-                    <span>Last triggered: {wf.lastTriggered}</span>
-                    <span>Total runs: {wf.triggerCount}</span>
-                  </div>
+                  ) : (
+                    <button onClick={() => handleActivateTemplate(wf as typeof WORKFLOW_TEMPLATES[0])} style={{ padding: "6px 14px", background: "#7c3aed", color: "white", border: "none", borderRadius: "20px", cursor: "pointer", fontSize: "12px", fontWeight: 600 }}>
+                      Activate
+                    </button>
+                  )}
                 </div>
-              ))}
-            </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  {wf.nodes.map((node: string, j: number) => (
+                    <div key={j} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <div style={{ padding: "6px 12px", borderRadius: "8px", fontSize: "12px", fontWeight: 500, background: j === 0 ? "#0c1a2e" : j === wf.nodes.length - 1 ? "#0a2e1a" : "#1e1b4b", color: j === 0 ? "#00d4ff" : j === wf.nodes.length - 1 ? "#22c55e" : "#f59e0b", border: `1px solid ${j === 0 ? "#00d4ff" : j === wf.nodes.length - 1 ? "#22c55e" : "#f59e0b"}` }}>
+                        {node}
+                      </div>
+                      {j < wf.nodes.length - 1 && <ChevronRight size={14} color="#4b5563" />}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
         {/* AI TOOLS TAB */}
-        {activeTab === "AI Tools" && (
-          <div className="space-y-6">
-            <div className="flex gap-2">
-              {(["report-card", "at-risk", "fee-prediction"] as const).map((sub) => (
-                <button
-                  key={sub}
-                  onClick={() => { setAiSubTab(sub); setAiResult(null); }}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
-                  style={
-                    aiSubTab === sub
-                      ? { backgroundColor: "rgba(124,58,237,0.2)", color: "#7c3aed", border: "1px solid rgba(124,58,237,0.4)" }
-                      : { color: "#6b7280", border: "1px solid transparent" }
-                  }
-                >
-                  {sub === "report-card" ? "Report Card Generator" : sub === "at-risk" ? "At-Risk Detector" : "Fee Predictor"}
+        {!loading && activeTab === "ai" && (
+          <div>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
+              {[
+                { id: "report-card", label: "Report Card Generator" },
+                { id: "at-risk", label: "At-Risk Detector" },
+                { id: "fee-prediction", label: "Fee Predictor" },
+              ].map(t => (
+                <button key={t.id} onClick={() => { setAiTool(t.id); setAiResult(""); }} style={{ padding: "8px 16px", background: aiTool === t.id ? "#7c3aed" : "transparent", color: aiTool === t.id ? "white" : "#7c3aed", border: "1px solid #7c3aed", borderRadius: "8px", cursor: "pointer", fontSize: "13px" }}>
+                  {t.label}
                 </button>
               ))}
             </div>
 
-            {/* Report Card */}
-            {aiSubTab === "report-card" && (
-              <div className="rounded-xl p-6" style={{ backgroundColor: "rgba(13,10,46,0.8)", border: "1px solid #1e1b4b" }}>
-                <h3 className="font-bold text-white mb-1 flex items-center gap-2"><Bot className="w-5 h-5 text-neural-purple" /> AI Report Card Generator</h3>
-                <p className="text-sm text-gray-500 mb-6">Generate personalised teacher comments from student marks using Gemini AI</p>
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm text-gray-400 block mb-1.5">Student Name</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Arjun Sharma"
-                      value={reportForm.studentName}
-                      onChange={(e) => setReportForm((p) => ({ ...p, studentName: e.target.value }))}
-                      className="w-full px-4 py-2.5 rounded-lg text-sm text-white placeholder-gray-600 outline-none"
-                      style={{ backgroundColor: "rgba(3,0,20,0.6)", border: "1px solid #1e1b4b" }}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-400 block mb-1.5">Subject Marks</label>
-                    <textarea
-                      rows={4}
-                      placeholder="e.g. Math: 87/100, Science: 92/100, English: 74/100, Social Studies: 88/100, Hindi: 79/100"
-                      value={reportForm.marks}
-                      onChange={(e) => setReportForm((p) => ({ ...p, marks: e.target.value }))}
-                      className="w-full px-4 py-2.5 rounded-lg text-sm text-white placeholder-gray-600 outline-none resize-none"
-                      style={{ backgroundColor: "rgba(3,0,20,0.6)", border: "1px solid #1e1b4b" }}
-                    />
-                  </div>
-                  <button
-                    onClick={() => callAI("report-card", { studentName: reportForm.studentName || "Arjun Sharma", marks: reportForm.marks || "Math: 87, Science: 92, English: 74" })}
-                    disabled={aiLoading}
-                    className="flex items-center gap-2 px-6 py-2.5 rounded-lg font-semibold text-sm text-white transition-all hover:scale-105 disabled:opacity-60"
-                    style={{ background: "linear-gradient(135deg, #7c3aed, #00d4ff)" }}
-                  >
-                    {aiLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</> : <><Bot className="w-4 h-4" /> Generate Comments</>}
-                  </button>
-                  {aiResult && aiSubTab === "report-card" && (
-                    <div className="rounded-xl p-5 mt-4" style={{ backgroundColor: "rgba(124,58,237,0.1)", border: "1px solid rgba(124,58,237,0.3)" }}>
-                      <div className="flex items-center gap-2 mb-3">
-                        <CheckCircle className="w-4 h-4 text-neural-green" />
-                        <span className="text-sm font-semibold text-neural-purple">Generated by {aiSource === "gemini" ? "Gemini 2.0 Flash" : aiSource === "openrouter" ? "Claude 3 Haiku" : "Mock (Demo)"}</span>
-                      </div>
-                      <p className="text-gray-300 text-sm leading-relaxed">{aiResult}</p>
-                    </div>
-                  )}
+            <div style={{ background: "#0d0a2e", border: "1px solid #1e1b4b", borderRadius: "12px", padding: "24px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px", color: "#7c3aed" }}>
+                <Brain size={20} />
+                <span style={{ fontWeight: 600 }}>Powered by Gemini 2.0 Flash → OpenRouter fallback</span>
+              </div>
+
+              {aiTool === "report-card" && (
+                <textarea value={aiInput} onChange={e => setAiInput(e.target.value)}
+                  placeholder="Enter student marks: Maths: 85, Science: 72, English: 65, Social Studies: 78..."
+                  style={{ width: "100%", height: "100px", background: "#030014", border: "1px solid #1e1b4b", borderRadius: "8px", color: "white", padding: "12px", fontSize: "13px", resize: "vertical", boxSizing: "border-box", marginBottom: "12px" }} />
+              )}
+
+              <button onClick={handleAITool} disabled={aiLoading} style={{ padding: "10px 24px", background: aiLoading ? "#1e1b4b" : "#7c3aed", color: "white", border: "none", borderRadius: "8px", cursor: aiLoading ? "not-allowed" : "pointer", fontWeight: 600, display: "flex", alignItems: "center", gap: "8px" }}>
+                <Zap size={14} />
+                {aiLoading ? "Calling Gemini\u2026" : aiTool === "report-card" ? "Generate Comments" : aiTool === "at-risk" ? "Detect At-Risk Students" : "Predict Fee Defaults"}
+              </button>
+
+              {aiResult && (
+                <div style={{ marginTop: "20px", background: "#030014", border: "1px solid #7c3aed", borderRadius: "8px", padding: "16px" }}>
+                  <div style={{ fontSize: "12px", color: "#7c3aed", marginBottom: "8px" }}>AI Response (via FastAPI → Gemini/OpenRouter → Neon)</div>
+                  <pre style={{ whiteSpace: "pre-wrap", fontSize: "13px", color: "#e2e8f0", fontFamily: "monospace", margin: 0 }}>{aiResult}</pre>
                 </div>
-              </div>
-            )}
-
-            {/* At-Risk */}
-            {aiSubTab === "at-risk" && (
-              <div className="rounded-xl p-6" style={{ backgroundColor: "rgba(13,10,46,0.8)", border: "1px solid #1e1b4b" }}>
-                <h3 className="font-bold text-white mb-1 flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-neural-amber" /> AI At-Risk Detector</h3>
-                <p className="text-sm text-gray-500 mb-6">AI analyses attendance, grades, and payment patterns to flag students who need intervention</p>
-                <button
-                  onClick={() => callAI("at-risk")}
-                  disabled={aiLoading}
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-lg font-semibold text-sm text-white transition-all hover:scale-105 disabled:opacity-60"
-                  style={{ background: "linear-gradient(135deg, #f59e0b, #ef4444)" }}
-                >
-                  {aiLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Analysing...</> : <><TrendingUp className="w-4 h-4" /> Analyse Fleet</>}
-                </button>
-                {atRiskData.length > 0 && (
-                  <div className="mt-6 space-y-4">
-                    {atRiskData.map((s: any, i: number) => (
-                      <div key={i} className="rounded-xl p-4" style={{ backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="font-semibold text-white">{s.name}</div>
-                          <span className="text-xs text-gray-500">{s.grade}</span>
-                        </div>
-                        <div className="flex flex-wrap gap-1 mb-2">
-                          {s.riskFactors?.map((f: string, j: number) => (
-                            <span key={j} className="px-2 py-0.5 rounded text-xs" style={{ backgroundColor: "rgba(239,68,68,0.15)", color: "#fca5a5" }}>{f}</span>
-                          ))}
-                        </div>
-                        <p className="text-xs text-neural-amber">Recommendation: {s.recommendation}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Fee Predictor */}
-            {aiSubTab === "fee-prediction" && (
-              <div className="rounded-xl p-6" style={{ backgroundColor: "rgba(13,10,46,0.8)", border: "1px solid #1e1b4b" }}>
-                <h3 className="font-bold text-white mb-1 flex items-center gap-2"><DollarSign className="w-5 h-5 text-neural-cyan" /> AI Fee Default Predictor</h3>
-                <p className="text-sm text-gray-500 mb-6">Predict which students are likely to default on fees in the next 30 days</p>
-                <button
-                  onClick={() => callAI("fee-prediction")}
-                  disabled={aiLoading}
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-lg font-semibold text-sm text-white transition-all hover:scale-105 disabled:opacity-60"
-                  style={{ background: "linear-gradient(135deg, #00d4ff, #7c3aed)" }}
-                >
-                  {aiLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Running...</> : <><BarChart3 className="w-4 h-4" /> Run Prediction</>}
-                </button>
-                {feePredData.length > 0 && (
-                  <div className="mt-6 space-y-3">
-                    {feePredData.map((s: any, i: number) => (
-                      <div key={i} className="rounded-xl p-4 flex items-center gap-4" style={{ backgroundColor: "rgba(13,10,46,0.6)", border: "1px solid #1e1b4b" }}>
-                        <div className="flex-1">
-                          <div className="font-semibold text-white text-sm">{s.name}</div>
-                          <div className="text-xs text-gray-500 mt-0.5">{s.grade} • {s.reason}</div>
-                        </div>
-                        <div className="text-right mr-4">
-                          <div className="text-2xl font-black" style={{ color: s.defaultProbability >= 70 ? "#ef4444" : s.defaultProbability >= 40 ? "#f59e0b" : "#22c55e" }}>
-                            {s.defaultProbability}%
-                          </div>
-                          <div className="text-xs text-gray-600">default risk</div>
-                        </div>
-                        <div className="text-xs text-right" style={{ color: s.defaultProbability >= 70 ? "#f59e0b" : "#6b7280" }}>
-                          {s.recommendation}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
       </div>
-
-      {/* New Workflow Modal */}
-      {showWorkflowModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}>
-          <div className="rounded-2xl p-6 w-full max-w-md" style={{ backgroundColor: "#0d0a2e", border: "1px solid #1e1b4b" }}>
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="font-bold text-white text-lg">New Workflow</h3>
-              <button onClick={() => setShowWorkflowModal(false)} className="text-gray-500 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
-            </div>
-            <p className="text-sm text-gray-500 mb-6">Choose a starting point for your workflow:</p>
-            <div className="space-y-3">
-              {WORKFLOW_TEMPLATES.map((t) => (
-                <button
-                  key={t.name}
-                  onClick={() => setShowWorkflowModal(false)}
-                  className="w-full flex items-center gap-4 p-4 rounded-xl text-left transition-all hover:scale-[1.02]"
-                  style={{ backgroundColor: "rgba(0,212,255,0.05)", border: "1px solid rgba(0,212,255,0.2)" }}
-                >
-                  <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: "rgba(0,212,255,0.15)" }}>
-                    <t.icon className="w-5 h-5 text-neural-cyan" />
-                  </div>
-                  <div>
-                    <div className="font-semibold text-white text-sm">{t.name}</div>
-                    <div className="text-xs text-gray-500">{t.desc}</div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-gray-600 ml-auto" />
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
